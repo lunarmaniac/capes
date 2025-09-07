@@ -31,7 +31,16 @@ func Execute() {
 
 func fetchUserCapes(username string) {
     url := fmt.Sprintf("https://capes.me/api/user/%s", username)
-    resp, err := http.Get(url)
+
+    req, err := http.NewRequest("GET", url, nil)
+    if err != nil {
+        log.Fatalf("failed to create request: %v", err)
+    }
+
+    req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36")
+
+    client := &http.Client{}
+    resp, err := client.Do(req)
     if err != nil {
         log.Fatalf("failed to fetch data: %v", err)
     }
