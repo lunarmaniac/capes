@@ -5,7 +5,7 @@
 ---
 
 a tiny cli tool to view minecraft player heads and capes directly in your terminal.  
-it fetches data from [capes.me](https://capes.me) and renders images inline using [kitty icat](https://sw.kovidgoyal.net/kitty/kittens/icat/).
+it fetches data from [capes.me](https://capes.me) and renders images inline using [kitty icat](https://sw.kovidgoyal.net/kitty/kittens/icat/) or **chafa** (configurable, more to be added soon).
 
 ---
 
@@ -15,7 +15,7 @@ it fetches data from [capes.me](https://capes.me) and renders images inline usin
 - fetches cape metadata and textures from capes.me
 - caching system to avoid unnecessary api calls
 - lightweight image layout with head, username, and capes
-- renders inline in kitty terminal (via `kitty +kitten icat`)
+- renders inline in Kitty terminal (`kitty +kitten icat`) or using `chafa` for portable terminals
 - fully configurable display and layout options
 
 ---
@@ -98,7 +98,8 @@ on first run, capes automatically creates a configuration file at `~/.config/cap
     "head_size": 8,
     "layout_height": 48,
     "upscale_factor": 4,
-    "show_head_only": true
+    "show_head_only": true,
+    "image_backend": "kitty"
   }
 }
 ```
@@ -106,6 +107,7 @@ on first run, capes automatically creates a configuration file at `~/.config/cap
 - **layout_height**: size in terminal cells for full layout with capes (default: 48)
 - **upscale_factor**: image upscaling multiplier for better quality (default: 4)
 - **show_head_only**: whether to show head when no capes are found (default: true)
+- **image_backend**: `"kitty"` (default) or `"chafa"` for portable terminal rendering
 
 #### layout settings
 ```json
@@ -162,7 +164,8 @@ here's a sample configuration for a more compact layout:
     "head_size": 6,
     "layout_height": 32,
     "upscale_factor": 3,
-    "show_head_only": true
+    "show_head_only": true,
+    "image_backend": "chafa"
   },
   "layout": {
     "spacing": 3,
@@ -194,7 +197,8 @@ the config file is created following the xdg base directory specification:
 ## requirements
 
 * [go](https://golang.org/dl/) (for building)
-* [kitty terminal](https://sw.kovidgoyal.net/kitty/)
+* **kitty terminal** recommended (for best quality)
+* **chafa** optional (portable fallback for other terminals)
 * [imagemagick](https://imagemagick.org/) (used to upscale images before rendering)
 
 ---
