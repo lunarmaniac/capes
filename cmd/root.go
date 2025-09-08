@@ -19,21 +19,165 @@ import (
     "golang.org/x/image/math/fixed"
 )
 
+// config structure
+type Config struct {
+    DefaultUsername string `json:"default_username"`
+    
+    Display struct {
+        HeadSize        int `json:"head_size"`         // size for head display (terminal rows)
+        LayoutHeight    int `json:"layout_height"`     // height for complete layout display
+        UpscaleFactor   int `json:"upscale_factor"`    // image upscaling factor (2x, 4x, etc)
+        ShowHeadOnly    bool `json:"show_head_only"`   // show only head when no capes found
+    } `json:"display"`
+    
+    Layout struct {
+        Spacing           int `json:"spacing"`            // space between major elements
+        CapeSpacing       int `json:"cape_spacing"`       // space between individual capes
+        CapesPerRow       int `json:"capes_per_row"`      // max capes per row (0 = auto)
+        UsernameRowHeight int `json:"username_row_height"` // height allocated for username text
+        CapeStartOffset   int `json:"cape_start_offset"`   // vertical offset for cape positioning
+        AvailableCapeWidth int `json:"available_cape_width"` // available width for cape area when auto calculating
+    } `json:"layout"`
+    
+    Cache struct {
+        CacheTTLHours int    `json:"cache_ttl_hours"`    // cache TTL in hours
+        CacheDir      string `json:"cache_dir"`          // custom cache directory
+    } `json:"cache"`
+    
+    Network struct {
+        TimeoutSeconds int    `json:"timeout_seconds"`    // HTTP timeout
+        UserAgent      string `json:"user_agent"`         // custom user agent
+    } `json:"network"`
+}
+
+// global config variable
+var appConfig Config
+
 var rootCmd = &cobra.Command{
     Use:   "capes [username]",
     Short: "display minecraft capes and head in terminal",
     Long:  "minimal CLI to fetch minecraft capes and player head from capes.me and render in Kitty terminal",
-    Args:  cobra.ExactArgs(1),
+    Args:  cobra.MaximumNArgs(1),
     Run: func(cmd *cobra.Command, args []string) {
-        username := args[0]
+        var username string
+        
+        if len(args) > 0 {
+            username = args[0]
+        } else if appConfig.DefaultUsername != "" {
+            username = appConfig.DefaultUsername
+        } else {
+            fmt.Println("Error: no username provided and no default username configured")
+            fmt.Println("Usage: capes [username]")
+            fmt.Printf("Or set \"default_username\" in: %s\n", getConfigPath())
+            os.Exit(1)
+        }
+        
         displayPlayer(username)
     },
+}
+
+func init() {
+    loadConfig()
 }
 
 func Execute() {
     if err := rootCmd.Execute(); err != nil {
         fmt.Println(err)
         os.Exit(1)
+    }
+}
+
+// default configuration values
+func getDefaultConfig() Config {
+    config := Config{}
+    
+    config.DefaultUsername = ""
+    
+    // display settings
+    config.Display.HeadSize = 8
+    config.Display.LayoutHeight = 48
+    config.Display.UpscaleFactor = 4
+    config.Display.ShowHeadOnly = true
+    
+    // layout settings
+    config.Layout.Spacing = 5
+    config.Layout.CapeSpacing = 2
+    config.Layout.CapesPerRow = 0 // auto calculate
+    config.Layout.UsernameRowHeight = 14
+    config.Layout.CapeStartOffset = 2
+    config.Layout.AvailableCapeWidth = 200
+    
+    // cache settings
+    config.Cache.CacheTTLHours = 24
+    config.Cache.CacheDir = "cache"
+    
+    // network settings
+    config.Network.TimeoutSeconds = 15
+    config.Network.UserAgent = "Mozilla/5.0 (capes-cli)"
+    
+    return config
+}
+
+func getConfigDir() string {
+    homeDir, err := os.UserHomeDir()
+    if err != nil {
+        log.Fatalf("failed to get home directory: %v", err)
+    }
+    
+    // follow XDG base directory specification
+    configHome := os.Getenv("XDG_CONFIG_HOME")
+    if configHome == "" {
+        configHome = filepath.Join(homeDir, ".config")
+    }
+    
+    return filepath.Join(configHome, "capes")
+}
+
+func getConfigPath() string {
+    return filepath.Join(getConfigDir(), "config.json")
+}
+
+func loadConfig() {
+    appConfig = getDefaultConfig()
+    configPath := getConfigPath()
+    
+    // check if config file exists
+    if _, err := os.Stat(configPath); os.IsNotExist(err) {
+        // create config directory and default config file
+        configDir := getConfigDir()
+        if err := os.MkdirAll(configDir, 0755); err != nil {
+            log.Printf("warning: failed to create config directory: %v", err)
+            return
+        }
+        
+        // write default config
+        data, err := json.MarshalIndent(appConfig, "", "  ")
+        if err != nil {
+            log.Printf("warning: failed to marshal default config: %v", err)
+            return
+        }
+        
+        if err := os.WriteFile(configPath, data, 0644); err != nil {
+            log.Printf("warning: failed to write config file: %v", err)
+            return
+        }
+        
+        fmt.Printf("created config file: %s\n", configPath)
+        fmt.Println("you can edit this file to customize your settings")
+        return
+    }
+    
+    // load existing config
+    data, err := os.ReadFile(configPath)
+    if err != nil {
+        log.Printf("warning: failed to read config file: %v", err)
+        return
+    }
+    
+    if err := json.Unmarshal(data, &appConfig); err != nil {
+        log.Printf("warning: failed to parse config file, using defaults: %v", err)
+        appConfig = getDefaultConfig()
+        return
     }
 }
 
@@ -52,24 +196,25 @@ type User struct {
     } `json:"capes"`
 }
 
-const cacheDir = "cache"
-const capeDir = cacheDir + "/capes"
-const headDir = cacheDir + "/heads"
-const capeCacheTTL = 24 * time.Hour
-const headCacheTTL = 24 * time.Hour
-
 func displayPlayer(username string) {
+    cacheDir := appConfig.Cache.CacheDir
+    capeDir := filepath.Join(cacheDir, "capes")
+    headDir := filepath.Join(cacheDir, "heads")
+    
     os.MkdirAll(capeDir, 0755)
     os.MkdirAll(headDir, 0755)
 
-    client := &http.Client{Timeout: 15 * time.Second}
+    client := &http.Client{
+        Timeout: time.Duration(appConfig.Network.TimeoutSeconds) * time.Second,
+    }
 
     allCapes := loadCapeCache(client)
     user := fetchUser(client, username)
 
     // doownload player head (might change to headshot in future from : https://capes.me/images/skins/bust/b05881186e75410db2db4d3066b223f7
     headPath := filepath.Join(headDir, user.UUID+".png")
-    downloadIfNeeded(client, "https://crafatar.com/avatars/"+user.UUID+"?size=32&overlay", headPath, headCacheTTL)
+    downloadIfNeeded(client, "https://crafatar.com/avatars/"+user.UUID+"?size=32&overlay", 
+                     headPath, time.Duration(appConfig.Cache.CacheTTLHours)*time.Hour)
 
     // collect valid capes
     var validCapes []Cape
@@ -87,8 +232,11 @@ func displayPlayer(username string) {
     }
 
     if len(validCapes) == 0 {
-        // still show head even if no capes (might be an issue if capes.me replies 404 like it has in past)
-        renderImageKitty(headPath, 8) // head size in term rows i think
+        if appConfig.Display.ShowHeadOnly {
+            renderImageKitty(headPath, appConfig.Display.HeadSize)
+        } else {
+            fmt.Printf("no capes found for user: %s\n", username)
+        }
         return
     }
 
@@ -96,7 +244,8 @@ func displayPlayer(username string) {
     var croppedPaths []string
     for _, cape := range validCapes {
         capePath := filepath.Join(capeDir, cape.Type+".png")
-        downloadIfNeeded(client, cape.URL, capePath, capeCacheTTL)
+        downloadIfNeeded(client, cape.URL, capePath, 
+                        time.Duration(appConfig.Cache.CacheTTLHours)*time.Hour)
 
         tempCroppedPath := filepath.Join(capeDir, cape.Type+"_cropped.png")
         if err := cropCape(capePath, tempCroppedPath); err != nil {
@@ -107,7 +256,9 @@ func displayPlayer(username string) {
     }
 
     if len(croppedPaths) == 0 {
-        renderImageKitty(headPath, 8)
+        if appConfig.Display.ShowHeadOnly {
+            renderImageKitty(headPath, appConfig.Display.HeadSize)
+        }
         return
     }
 
@@ -119,7 +270,7 @@ func displayPlayer(username string) {
     }
 
     // display the complete layout
-    renderImageKitty(layoutPath, 48)
+    renderImageKitty(layoutPath, appConfig.Display.LayoutHeight)
 }
 
 func createPlayerLayout(headPath string, capePaths []string, username string, uuid string, outputPath string) error {
@@ -144,18 +295,21 @@ func createPlayerLayout(headPath string, capePaths []string, username string, uu
     headWidth := headImg.Bounds().Dx()
     headHeight := headImg.Bounds().Dy()
     
-    // text dimensions
-    textHeight := 10
+    // use config values for layout
+    spacing := appConfig.Layout.Spacing
+    capeSpacing := appConfig.Layout.CapeSpacing
+    usernameRowHeight := appConfig.Layout.UsernameRowHeight
+    capeStartOffset := appConfig.Layout.CapeStartOffset
     
-    // calculate layout dimensions
-    spacing := 5 // space between elements
-    capeSpacing := 2 // space between capes
-    
-    // calculate how many capes fit horizontally to the right of head
-    availableWidthForCapes := 200 // reasonable width for cape area
-    capesPerRow := availableWidthForCapes / (capeWidth + capeSpacing)
-    if capesPerRow < 1 {
-        capesPerRow = 1
+    // calculate capes per row
+    capesPerRow := appConfig.Layout.CapesPerRow
+    if capesPerRow <= 0 {
+        // auto calculate based on available width
+        availableWidthForCapes := appConfig.Layout.AvailableCapeWidth
+        capesPerRow = availableWidthForCapes / (capeWidth + capeSpacing)
+        if capesPerRow < 1 {
+            capesPerRow = 1
+        }
     }
     if capesPerRow > len(capePaths) {
         capesPerRow = len(capePaths)
@@ -179,8 +333,7 @@ func createPlayerLayout(headPath string, capePaths []string, username string, uu
     }
     
     totalHeight := headHeight
-    usernameRowHeight := textHeight + 4 // changing this effects vertical position of the capes, useful for aligning with the buttom of the head lol
-    capeStartFromTop := usernameRowHeight + 2 // capes start just below username
+    capeStartFromTop := usernameRowHeight + capeStartOffset
     
     if capeStartFromTop + capeAreaHeight > totalHeight {
         totalHeight = capeStartFromTop + capeAreaHeight
@@ -191,8 +344,9 @@ func createPlayerLayout(headPath string, capePaths []string, username string, uu
     // draw head image at top left
     draw.Draw(composite, image.Rect(0, 0, headWidth, headHeight), headImg, image.Point{}, draw.Src)
     
-    // draw username to the right of head, at the top
-    drawText(composite, headWidth + spacing, textHeight, username)
+    // draw username to the right of head, at the top (adjust position based on config)
+    textY := usernameRowHeight - 4 // adjust text position within the row height
+    drawText(composite, headWidth + spacing, textY, username)
     
     // cape area starts to the right of head, below username
     capeStartX := headWidth + spacing
@@ -289,14 +443,14 @@ func cropCape(inputPath, outputPath string) error {
     return png.Encode(out, cropped)
 }
 
-// renderImageKitty upscales the image by 4x cuz it looks better
+// renderImageKitty upscales the image using config values
 func renderImageKitty(path string, targetHeight int) {
     // create a temporary file for the upscaled image
     tmpUpscaled := filepath.Join(os.TempDir(), "tmp_upscaled.png")
 
-    // upscale 4x with nearest neighbor
-    cmdUpscale := exec.Command("magick", path, "-scale", "400%", tmpUpscaled)
-    // suppress both stdout and stderr to avoid imagemagick warnings because it complains even tho it works..?
+    // upscale using config factor with nearest neighbor
+    upscalePercent := fmt.Sprintf("%d%%", appConfig.Display.UpscaleFactor * 100)
+    cmdUpscale := exec.Command("magick", path, "-scale", upscalePercent, tmpUpscaled)
     cmdUpscale.Stdout = nil
     cmdUpscale.Stderr = nil
     if err := cmdUpscale.Run(); err != nil {
@@ -326,7 +480,7 @@ func renderImageKitty(path string, targetHeight int) {
 func fetchUser(client *http.Client, username string) User {
     url := fmt.Sprintf("https://capes.me/api/user/%s", username)
     req, _ := http.NewRequest("GET", url, nil)
-    req.Header.Set("User-Agent", "Mozilla/5.0")
+    req.Header.Set("User-Agent", appConfig.Network.UserAgent)
 
     resp, err := client.Do(req)
     if err != nil {
@@ -348,11 +502,12 @@ func fetchUser(client *http.Client, username string) User {
 }
 
 func loadCapeCache(client *http.Client) []Cape {
-    cacheFile := filepath.Join(capeDir, "capes.json")
+    cacheFile := filepath.Join(appConfig.Cache.CacheDir, "capes", "capes.json")
     var cached []Cape
 
+    cacheTTL := time.Duration(appConfig.Cache.CacheTTLHours) * time.Hour
     info, err := os.Stat(cacheFile)
-    if err == nil && time.Since(info.ModTime()) < capeCacheTTL {
+    if err == nil && time.Since(info.ModTime()) < cacheTTL {
         f, err := os.Open(cacheFile)
         if err == nil {
             defer f.Close()
@@ -362,7 +517,7 @@ func loadCapeCache(client *http.Client) []Cape {
     }
 
     req, _ := http.NewRequest("GET", "https://capes.me/api/capes", nil)
-    req.Header.Set("User-Agent", "Mozilla/5.0")
+    req.Header.Set("User-Agent", appConfig.Network.UserAgent)
     resp, err := client.Do(req)
     if err != nil {
         log.Fatalf("failed to fetch capes: %v", err)
