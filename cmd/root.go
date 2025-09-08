@@ -28,6 +28,7 @@ type Config struct {
         LayoutHeight    int `json:"layout_height"`     // height for complete layout display
         UpscaleFactor   int `json:"upscale_factor"`    // image upscaling factor (2x, 4x, etc)
         ShowHeadOnly    bool `json:"show_head_only"`   // show only head when no capes found
+        ImageBackend string `json:"image_backend"` // e.g., "kitty", "chafa"
     } `json:"display"`
     
     Layout struct {
@@ -98,6 +99,7 @@ func getDefaultConfig() Config {
     config.Display.LayoutHeight = 48
     config.Display.UpscaleFactor = 4
     config.Display.ShowHeadOnly = true
+    config.Display.ImageBackend = "kitty"
     
     // layout settings
     config.Layout.Spacing = 5
@@ -233,7 +235,7 @@ func displayPlayer(username string) {
 
     if len(validCapes) == 0 {
         if appConfig.Display.ShowHeadOnly {
-            renderImageKitty(headPath, appConfig.Display.HeadSize)
+            renderImageToTerminal(headPath, appConfig.Display.HeadSize)
         } else {
             fmt.Printf("no capes found for user: %s\n", username)
         }
@@ -257,7 +259,7 @@ func displayPlayer(username string) {
 
     if len(croppedPaths) == 0 {
         if appConfig.Display.ShowHeadOnly {
-            renderImageKitty(headPath, appConfig.Display.HeadSize)
+            renderImageToTerminal(headPath, appConfig.Display.HeadSize)
         }
         return
     }
@@ -270,7 +272,7 @@ func displayPlayer(username string) {
     }
 
     // display the complete layout
-    renderImageKitty(layoutPath, appConfig.Display.LayoutHeight)
+    renderImageToTerminal(layoutPath, appConfig.Display.LayoutHeight)
 }
 
 func createPlayerLayout(headPath string, capePaths []string, username string, uuid string, outputPath string) error {
@@ -443,13 +445,13 @@ func cropCape(inputPath, outputPath string) error {
     return png.Encode(out, cropped)
 }
 
-// renderImageKitty upscales the image using config values
-func renderImageKitty(path string, targetHeight int) {
+// renderImageToTerminal upscales the image using config values
+func renderImageToTerminal(path string, targetHeight int) {
     // create a temporary file for the upscaled image
     tmpUpscaled := filepath.Join(os.TempDir(), "tmp_upscaled.png")
 
     // upscale using config factor with nearest neighbor
-    upscalePercent := fmt.Sprintf("%d%%", appConfig.Display.UpscaleFactor * 100)
+    upscalePercent := fmt.Sprintf("%d%%", appConfig.Display.UpscaleFactor*100)
     cmdUpscale := exec.Command("magick", path, "-scale", upscalePercent, tmpUpscaled)
     cmdUpscale.Stdout = nil
     cmdUpscale.Stderr = nil
@@ -458,18 +460,30 @@ func renderImageKitty(path string, targetHeight int) {
         return
     }
 
-    // display in Kitty with left alignment and stderr suppressed
-    cmdKitty := exec.Command("kitty", "+kitten", "icat", "--align", "left", tmpUpscaled)
-    cmdKitty.Stdout = os.Stdout
-    // redirect stderr to /dev/null to suppress kitty's imagemagick errors
+    // determine backend command
+    var cmd *exec.Cmd
+    switch appConfig.Display.ImageBackend {
+    case "kitty":
+        cmd = exec.Command("kitty", "+kitten", "icat", "--align", "left", tmpUpscaled)
+
+    case "chafa":
+        cmd = exec.Command("chafa", tmpUpscaled, "--fill=block", "--symbols=block")
+
+    default:
+        log.Printf("unknown image backend '%s', defaulting to Kitty", appConfig.Display.ImageBackend)
+        cmd = exec.Command("kitty", "+kitten", "icat", "--align", "left", tmpUpscaled)
+    }
+
+    // redirect stdout/stderr trashh
+    cmd.Stdout = os.Stdout
     devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
     if err == nil {
-        cmdKitty.Stderr = devNull
+        cmd.Stderr = devNull
         defer devNull.Close()
     }
-    
-    if err := cmdKitty.Run(); err != nil {
-        log.Printf("failed to display %s in Kitty: %v", tmpUpscaled, err)
+
+    if err := cmd.Run(); err != nil {
+        log.Printf("failed to display %s using %s: %v", tmpUpscaled, appConfig.Display.ImageBackend, err)
         return
     }
 
