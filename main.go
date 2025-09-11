@@ -1,6 +1,6 @@
 package main
 
-import "github.com/dorocha/capes/cmd"
+import "github.com/dorochadev/capes/cmd"
 
 func main() {
     cmd.Execute()

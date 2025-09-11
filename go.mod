@@ -1,4 +1,4 @@
-module github.com/dorocha/capes
+module github.com/dorochadev/capes
 
 go 1.21.6
 
