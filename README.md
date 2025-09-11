@@ -25,7 +25,7 @@ it fetches data from [capes.me](https://capes.me) and renders images inline usin
 clone the repo and build with go:
 
 ```sh
-git clone https://github.com/dorocha/capes
+git clone https://github.com/dorochadev/capes
 cd capes
 go build -o capes
 ```
